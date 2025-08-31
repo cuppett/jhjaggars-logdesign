@@ -658,3 +658,337 @@ class TestCrossAccountRoleAssumption:
             assert call_args[1]['central_credentials']['AccessKeyId'] == 'central-key'
             assert call_args[1]['customer_role_arn'] == 'arn:aws:iam::987654321098:role/CustomerRole'
             assert call_args[1]['external_id'] == '123456789012'
+
+
+class TestVectorLogParsing:
+    """Test Vector log level parsing functionality."""
+    
+    def test_parse_vector_log_level_info(self):
+        """Test parsing Vector INFO level logs."""
+        import logging
+        log_line = "2025-08-31T10:53:48.817588Z INFO vector::app: Log level is enabled. level=\"info\""
+        result = parse_vector_log_level(log_line)
+        assert result == logging.INFO
+    
+    def test_parse_vector_log_level_warn(self):
+        """Test parsing Vector WARN level logs."""
+        import logging
+        log_line = "2025-08-31T10:53:48.817588Z WARN vector::config: Deprecated configuration option used"
+        result = parse_vector_log_level(log_line)
+        assert result == logging.WARNING
+    
+    def test_parse_vector_log_level_error(self):
+        """Test parsing Vector ERROR level logs."""
+        import logging
+        log_line = "2025-08-31T10:53:48.817588Z ERROR vector::sources: Failed to connect to source"
+        result = parse_vector_log_level(log_line)
+        assert result == logging.ERROR
+    
+    def test_parse_vector_log_level_debug(self):
+        """Test parsing Vector DEBUG level logs."""
+        import logging
+        log_line = "2025-08-31T10:53:48.817588Z DEBUG vector::internal: Debug information"
+        result = parse_vector_log_level(log_line)
+        assert result == logging.DEBUG
+    
+    def test_parse_vector_log_level_trace(self):
+        """Test parsing Vector TRACE level logs."""
+        import logging
+        log_line = "2025-08-31T10:53:48.817588Z TRACE vector::internal: Trace information"
+        result = parse_vector_log_level(log_line)
+        assert result == logging.DEBUG  # TRACE maps to DEBUG
+    
+    def test_parse_vector_log_level_with_microseconds(self):
+        """Test parsing Vector logs with microsecond timestamps."""
+        import logging
+        log_line = "2025-08-31T10:53:48.817588123Z INFO vector::app: Message with microseconds"
+        result = parse_vector_log_level(log_line)
+        assert result == logging.INFO
+    
+    def test_parse_vector_log_level_invalid_format(self):
+        """Test parsing non-Vector log format falls back to WARNING."""
+        import logging
+        log_line = "This is not a Vector log line"
+        result = parse_vector_log_level(log_line)
+        assert result == logging.WARNING
+    
+    def test_parse_vector_log_level_unknown_level(self):
+        """Test parsing Vector log with unknown level falls back to WARNING."""
+        import logging
+        log_line = "2025-08-31T10:53:48.817588Z UNKNOWN vector::app: Unknown level"
+        result = parse_vector_log_level(log_line)
+        assert result == logging.WARNING
+    
+    def test_log_vector_line_info(self, caplog):
+        """Test log_vector_line with INFO level."""
+        import logging
+        with caplog.at_level(logging.INFO):
+            log_line = "2025-08-31T10:53:48.817588Z INFO vector::app: Test message"
+            log_vector_line(log_line)
+        
+        assert len(caplog.records) == 1
+        assert caplog.records[0].levelno == logging.INFO
+        assert "VECTOR: 2025-08-31T10:53:48.817588Z INFO vector::app: Test message" in caplog.records[0].message
+    
+    def test_log_vector_line_warning(self, caplog):
+        """Test log_vector_line with WARNING level."""
+        import logging
+        with caplog.at_level(logging.WARNING):
+            log_line = "2025-08-31T10:53:48.817588Z WARN vector::config: Test warning"
+            log_vector_line(log_line)
+        
+        assert len(caplog.records) == 1
+        assert caplog.records[0].levelno == logging.WARNING
+        assert "VECTOR: 2025-08-31T10:53:48.817588Z WARN vector::config: Test warning" in caplog.records[0].message
+    
+    def test_log_vector_line_error(self, caplog):
+        """Test log_vector_line with ERROR level."""
+        import logging
+        with caplog.at_level(logging.ERROR):
+            log_line = "2025-08-31T10:53:48.817588Z ERROR vector::sources: Test error"
+            log_vector_line(log_line)
+        
+        assert len(caplog.records) == 1
+        assert caplog.records[0].levelno == logging.ERROR
+        assert "VECTOR: 2025-08-31T10:53:48.817588Z ERROR vector::sources: Test error" in caplog.records[0].message
+    
+    def test_parse_vector_log_level_long_message_performance(self):
+        """Test that parsing only checks first 50 characters for performance."""
+        import logging
+        # Create a very long log message - the level should still be parsed correctly
+        # because we only check the first 50 characters
+        very_long_message = "This is a very long message that goes on and on and contains many characters and could potentially be thousands of characters long in production but we should only scan the first 50 characters for performance reasons"
+        log_line = f"2025-08-31T10:53:48.817588Z INFO vector::app: {very_long_message}"
+        
+        result = parse_vector_log_level(log_line)
+        assert result == logging.INFO
+        
+        # Test that it works even if the message is shorter than 50 characters
+        short_log_line = "2025-08-31T10:53:48.817588Z WARN vector::config: Short"
+        result = parse_vector_log_level(short_log_line)
+        assert result == logging.WARNING
+    
+    def test_parse_vector_log_level_simplified_regex_edge_cases(self):
+        """Test simplified regex handles edge cases correctly."""
+        import logging
+        
+        # Test that log level keywords in message content don't interfere
+        # (should pick up the first occurrence which is the actual log level)
+        log_line = "2025-08-31T10:53:48.817588Z INFO vector::app: ERROR occurred in downstream"
+        result = parse_vector_log_level(log_line)
+        assert result == logging.INFO  # Should pick up INFO, not ERROR
+        
+        # Test that partial matches don't work (word boundaries)
+        log_line = "2025-08-31T10:53:48.817588Z INFO vector::app: INFORMATION message"
+        result = parse_vector_log_level(log_line)
+        assert result == logging.INFO  # Should pick up INFO, not be confused by INFORMATION
+        
+        # Test line with no recognizable log level
+        log_line = "Some random text without log level keywords"
+        result = parse_vector_log_level(log_line)
+        assert result == logging.WARNING  # Should fallback to WARNING
+
+
+
+class TestVectorSubprocessTimestampMapping:
+    """Test Vector subprocess configuration for CloudWatch timestamp mapping."""
+    
+    @patch('log_processor.subprocess.Popen')
+    @patch('log_processor.tempfile.mkstemp')
+    def test_vector_config_includes_timestamp_transform(self, mock_mkstemp, mock_popen):
+        """Test that Vector config template includes timestamp transform for CloudWatch mapping."""
+        mock_mkstemp.return_value = (5, '/tmp/vector-config-123.yaml')
+        
+        # Mock subprocess
+        mock_process = Mock()
+        mock_process.poll.return_value = None
+        mock_process.communicate.return_value = ('Vector output', '')
+        mock_process.returncode = 0
+        mock_popen.return_value = mock_process
+        
+        log_events = [{"message": "Test log", "timestamp": 1725108058}]
+        
+        credentials = {
+            'AccessKeyId': 'test-key',
+            'SecretAccessKey': 'test-secret',
+            'SessionToken': 'test-token'
+        }
+        
+        # We'll capture what's written to the temporary config file
+        written_config = None
+        
+        def mock_fdopen(fd, mode):
+            if mode == 'w':
+                # Create a mock file object that captures what's written
+                mock_file = Mock()
+                written_configs = []
+                
+                def write_side_effect(content):
+                    written_configs.append(content)
+                    return len(content)
+                
+                def context_manager():
+                    return mock_file
+                
+                mock_file.write.side_effect = write_side_effect
+                mock_file.__enter__ = lambda self: self
+                mock_file.__exit__ = lambda self, *args: None
+                
+                # Store reference so we can access it later
+                mock_fdopen.written_configs = written_configs
+                return mock_file
+            return Mock()
+        
+        # Mock the template file read with timestamp transform approach
+        template_content = '''data_dir: /tmp/vector-{session_id}
+
+sources:
+  stdin:
+    type: stdin
+    decoding:
+      codec: "json"
+
+transforms:
+  extract_timestamp:
+    type: remap
+    inputs: ["stdin"]
+    source: |
+      # Extract timestamp from JSON and convert to proper format
+      if exists(.timestamp) {{
+        if is_string(.timestamp) {{
+          # Parse ISO timestamp string
+          parsed_ts, err = parse_timestamp(.timestamp, "%+")
+          if err == null {{
+            .timestamp = parsed_ts
+          }}
+        }} else if is_float(.timestamp) || is_integer(.timestamp) {{
+          # Convert numeric timestamp to proper timestamp object
+          ts_value = to_float!(.timestamp)
+          if ts_value > 1000000000000.0 {{
+            .timestamp = from_unix_timestamp!(to_int!(ts_value / 1000.0), "seconds")
+          }} else {{
+            .timestamp = from_unix_timestamp!(to_int!(ts_value), "seconds")
+          }}
+        }}
+      }}
+
+sinks:
+  cloudwatch_logs:
+    type: aws_cloudwatch_logs
+    inputs: ["extract_timestamp"]
+    region: "{region}"
+    group_name: "{log_group}"
+    stream_name: "{log_stream}"
+    encoding:
+      codec: "text"
+      timestamp_format: "unix"
+    auth:
+      assume_role: "{customer_role_arn}"
+      external_id: "{external_id}"
+    batch:
+      max_events: 1000
+      timeout_secs: 5
+    request:
+      retry_attempts: 3
+      retry_max_duration_secs: 30'''
+        
+        with patch('builtins.open', mock_open(read_data=template_content)), \
+             patch('os.fdopen', side_effect=mock_fdopen), \
+             patch('os.path.exists', return_value=True), \
+             patch('os.unlink'), \
+             patch('shutil.rmtree'):
+            
+            log_processor.deliver_logs_with_vector(
+                log_events=log_events,
+                central_credentials=credentials,
+                customer_role_arn='arn:aws:iam::987654321098:role/CustomerRole',
+                external_id='123456789012',
+                region='us-east-1',
+                log_group='/aws/logs/test',
+                log_stream='test-stream',
+                session_id='test-session',
+                s3_timestamp=1725108058000
+            )
+            
+            # Verify the config was written with timestamp transform
+            written_config = ''.join(mock_fdopen.written_configs)
+            assert 'extract_timestamp:' in written_config
+            assert 'type: remap' in written_config
+            assert 'parse_timestamp(.timestamp' in written_config
+            assert 'timestamp_format: "unix"' in written_config
+            assert 'region: "us-east-1"' in written_config
+            assert 'group_name: "/aws/logs/test"' in written_config
+    
+    @patch('log_processor.subprocess.Popen')
+    @patch('log_processor.tempfile.mkstemp')
+    def test_vector_receives_proper_timestamp_format(self, mock_mkstemp, mock_popen):
+        """Test that Vector subprocess receives timestamps in proper Unix seconds format."""
+        mock_mkstemp.return_value = (5, '/tmp/vector-config-123.yaml')
+        
+        # Mock subprocess
+        mock_process = Mock()
+        mock_process.poll.return_value = None
+        mock_process.communicate.return_value = ('Vector output', '')
+        mock_process.returncode = 0
+        mock_popen.return_value = mock_process
+        
+        # Test with mixed timestamp formats
+        log_events = [
+            {"message": "Log 1", "timestamp": 1725108058000},  # Milliseconds
+            {"message": "Log 2", "timestamp": 1725108059},     # Seconds
+            {"message": "Log 3", "timestamp": 1725108060000}   # Milliseconds
+        ]
+        
+        credentials = {
+            'AccessKeyId': 'test-key',
+            'SecretAccessKey': 'test-secret',
+            'SessionToken': 'test-token'
+        }
+        
+        # Mock file operations
+        mocked_open = mock_open(read_data='mock config template')
+        
+        with patch('builtins.open', mocked_open), \
+             patch('os.fdopen', mock_open()), \
+             patch('os.path.exists', return_value=True), \
+             patch('os.unlink'), \
+             patch('shutil.rmtree'):
+            
+            log_processor.deliver_logs_with_vector(
+                log_events=log_events,
+                central_credentials=credentials,
+                customer_role_arn='arn:aws:iam::987654321098:role/CustomerRole',
+                external_id='123456789012',
+                region='us-east-1',
+                log_group='/aws/logs/test',
+                log_stream='test-stream',
+                session_id='test-session',
+                s3_timestamp=1725108058000
+            )
+            
+            # Verify subprocess was called
+            assert mock_popen.called
+            
+            # Get the input sent to Vector via communicate()
+            communicate_call = mock_process.communicate.call_args
+            vector_input = communicate_call[1]['input']
+            
+            # Parse the NDJSON input to verify timestamp conversion
+            lines = vector_input.strip().split('\n')
+            assert len(lines) == 3
+            
+            # Check first event (millisecond timestamp converted to seconds)
+            event1 = json.loads(lines[0])
+            assert event1['message'] == "Log 1"
+            assert event1['timestamp'] == 1725108058.0  # Converted from ms to seconds
+            
+            # Check second event (already in seconds)
+            event2 = json.loads(lines[1])
+            assert event2['message'] == "Log 2"
+            assert event2['timestamp'] == 1725108059  # Should remain as seconds
+            
+            # Check third event (millisecond timestamp converted to seconds)
+            event3 = json.loads(lines[2])
+            assert event3['message'] == "Log 3"
+            assert event3['timestamp'] == 1725108060.0  # Converted from ms to seconds
+>>>>>>> 9da15a7 (feat: Fix CloudWatch timestamp mapping and add audit log support)
