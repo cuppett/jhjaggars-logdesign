@@ -7,6 +7,17 @@ Parameters:
     Description: 'ARN of the central log distribution role (provided by log service provider)'
     AllowedPattern: '^arn:aws:iam::[0-9]{12}:role/ROSA-CentralLogDistributionRole-[a-f0-9]{8}$'
     ConstraintDescription: 'Must be a valid IAM role ARN matching pattern: arn:aws:iam::ACCOUNT:role/ROSA-CentralLogDistributionRole-XXXXXXXX'
+  S3BucketName:
+    Type: String
+    Description: '(Optional) Name of the S3 bucket for log delivery. If provided, S3 permissions will be added.'
+    Default: ''
+  S3BucketPrefix:
+    Type: String
+    Description: '(Optional) Prefix for log files within the S3 bucket.'
+    Default: ''
+
+Conditions:
+  EnableS3Delivery: !Not [!Equals [!Ref S3BucketName, '']]
 
 Metadata:
   AWS::CloudFormation::Interface:
@@ -15,9 +26,18 @@ Metadata:
           default: "Cross-Account Access"
         Parameters:
           - CentralLogDistributionRoleArn
+      - Label:
+          default: "S3 Destination (Optional)"
+        Parameters:
+          - S3BucketName
+          - S3BucketPrefix
     ParameterLabels:
       CentralLogDistributionRoleArn:
         default: "Central Log Distribution Role ARN"
+      S3BucketName:
+        default: "Destination S3 Bucket Name"
+      S3BucketPrefix:
+        default: "Destination S3 Bucket Prefix"
 
 Resources:
   # IAM role for cross-account log delivery
@@ -59,6 +79,21 @@ Resources:
                   - 'logs:PutLogEvents'
                 Resource: 
                   - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/ROSA/cluster-logs/*:log-stream:*'
+        - PolicyName: S3DeliveryPolicy
+          Condition: EnableS3Delivery
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: S3BucketAccess
+                Effect: Allow
+                Action:
+                  - 's3:GetBucketLocation'
+                Resource: !Sub 'arn:aws:s3:::${S3BucketName}'
+              - Sid: S3WriteAccess
+                Effect: Allow
+                Action:
+                  - 's3:PutObject'
+                Resource: !Sub 'arn:aws:s3:::${S3BucketName}/${S3BucketPrefix}*'
       Tags:
         - Key: 'Purpose'
           Value: 'CrossAccountLogDelivery'

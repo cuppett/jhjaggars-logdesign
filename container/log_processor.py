@@ -778,8 +778,6 @@ def deliver_logs_with_vector(
             vector_process.kill()
 
 
-
-
 def main():
     """
     Main entry point for standalone execution
